@@ -1,0 +1,40 @@
+services:
+  scorer:
+    build:
+      context: .
+      args:
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./artifacts:/app/artifacts:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n:${N8N_VERSION:-2.44.6}
+    ports:
+      - "5678:5678"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - N8N_LISTEN_ADDRESS=0.0.0.0
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Europe/London}
+      # Lets the workflow read DISCORD_WEBHOOK_URL / GOOGLE_SHEET_ID via $env.
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      # Alert only when at least this fraction of a batch is anomalous.
+      - ALERT_MIN_RATE=${ALERT_MIN_RATE:-0.10}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      scorer:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  n8n_data:
