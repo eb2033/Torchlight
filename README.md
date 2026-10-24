@@ -101,7 +101,7 @@ Everything below ran against the real compose stack (scorer + n8n 2.44.6). A loc
 
 - **Why unsupervised:** labelled attacks are rare and keep changing, while normal behaviour is plentiful. Training on normal traffic only means new attack types (KDDTest+ contains attack types never seen in training) can still look anomalous.
 - **Preprocessing:** byte counts are heavy-tailed, so numeric features get `log1p` followed by min-max scaling to [0, 1]. Standard scaling gave rare-but-normal values huge z-scores, which pushed p99 recall down to 33%. Bounded features fixed that without touching the model. The preprocessor is fitted on normal training rows only and reused by the API (`preprocessor.joblib`), so training and serving can't drift apart.
-- **Alert gate on anomaly *rate*, not `anomaly_count > 0`:** even at a 2.8% false-positive rate, a 200-record batch of pure normal traffic almost always has a few flagged records (19 of 20 batches in testing). Alerting on "any anomaly" would page someone on nearly every batch. Gating on ≥10% of the batch separates normal batches (median 2.2%, max 6.5%) from attack-heavy ones (16-22.5%). The scorer still reports every flagged record; only the paging decision is batched.
+- **Alert gate on anomaly *rate*, not `anomaly_count > 0`:** even at a 2.8% false-positive rate, a 200-record batch of pure normal traffic almost always has a few flagged records (19 of 20 batches in testing). Alerting on "any anomaly" would page someone on nearly every batch. Gating on ≥10% of the batch separates normal batches (median 2.2%, max 6.5%) from attack-heavy ones (16-22.5%). The scorer still reports every flagged record; only the paging decision is batched. It has real blind spots, measured in [The rate gate's blind spots](#the-rate-gates-blind-spots).
 - **Alert-fatigue controls:** batching, the rate gate, and calling the LLM once per *anomalous batch* (never per record) keep cost, latency and noise down.
 - **Graceful degradation:** the LLM has a 20 s timeout and 1 retry, and its error output is wired into the same validation step. Any failure (timeout, 5xx, bad JSON, wrong severity, missing credential) produces the fallback alert with raw stats. The alert path never depends on the LLM.
 - **HTTP Request node instead of Basic LLM Chain:** n8n's Anthropic Chat Model node has no timeout setting (the SDK default is 10 minutes), which would break the 20 s budget. Calling the Messages API directly gives a hard timeout and still uses n8n's Anthropic credential type, so the key is still stored by n8n.
@@ -117,6 +117,32 @@ Everything below ran against the real compose stack (scorer + n8n 2.44.6). A loc
 - One-hot encoding ignores services never seen in *normal* training traffic, so an attack on a never-seen service loses that signal (numeric features still score it).
 - The LLM's `likely_cause` is a hypothesis, not a diagnosis. It only sees aggregate features, not packets or hosts.
 - If the scorer is down, the webhook returns 500 and no alert is sent. That is the next reliability gap to close (see below).
+
+### The rate gate's blind spots
+
+The ≥10% gate trades sensitivity for quiet. It removes false pages on normal traffic, but it is tuned for 200-record batches with noisy attacks, and it fails in three predictable ways. Measured over 50 seeded batches each, using KDDTest+ records:
+
+| Scenario | Alerted |
+|---|---|
+| Normal only, n = 10 | **9/50** (1 false positive = 10%) |
+| Normal only, n = 20 | 3/50 |
+| Normal only, n = 50 / 200 / 1000 | 0/50 |
+| n = 200, 5% attacks | **0/50** |
+| n = 200, 10% attacks | 11/50 |
+| n = 200, 20% or 30% attacks | 50/50 |
+| n = 200, 5 low-volume R2L/U2R records (e.g. `guess_passwd`, `buffer_overflow`) | **0/50** |
+
+1. **Small batches are noisy.** A rate over 10 records moves in 10% steps, so one false positive pages someone.
+2. **Large or mixed batches dilute attacks.** An attack that makes up less than ~10% of a batch is hidden. Because the gate is a *fraction*, a bigger batch hides more attack records.
+3. **Low-and-slow attacks never trip it.** A handful of password-guessing or privilege-escalation records won't move the rate. The model also misses most of these classes per record (only 8.3% of R2L/U2R test records are flagged), because they look like normal traffic at the connection level. The gate makes an existing model weakness worse.
+
+The 10% value comes from this replay mix: it sits between the normal-only maximum (6.5%) and the attack-heavy minimum (16%). It is not a principled number, and it would need re-deriving for real traffic.
+
+**How I'd fix it, in order of effort:**
+- **Minimum batch size:** don't evaluate the gate below ~50 records; buffer until the batch is big enough.
+- **High-confidence override:** alert on any single record far above the threshold (e.g. above the p99.9 score), whatever the batch rate. This catches the rare loud record without paging on noise.
+- **Statistical gate instead of a fixed rate:** alert when the anomaly count is significantly above what the known false-positive rate predicts (a binomial test, with p₀ = 0.028 measured on test normals). This adapts to batch size automatically: 6 flagged records in 200 is expected, 20 is not.
+- **Time windows:** compute the rate over a sliding 5-15 minute window per source/service instead of per arbitrary batch, so low-and-slow activity accumulates rather than resetting each batch.
 
 ## What I'd add next
 
