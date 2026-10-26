@@ -44,7 +44,7 @@ Note the gap between the 1% false-positive rate on validation and 2.8% on test. 
 *A triaged alert for an attack-heavy batch of 200 records, 42 of them flagged: severity P3, a summary, a hedged likely cause, four suggested checks and a confidence level. It ends with a line stating the triage is advisory and no action has been taken.*
 
 ![Fallback Discord alert](docs/LLMFail.png)
-*The same batch with the Anthropic credential deliberately broken: the alert still goes out, marked UNTRIAGED, with the LLM error and the raw scorer stats. This is the graceful-degradation path, and a human is told plainly that they need to do the triage.*
+*The same batch with the Anthropic credential deliberately broken: the alert still goes out, marked UNTRIAGED, with the LLM error and the raw scorer stats. This is the graceful-degradation path, and a person is told plainly that they need to do the triage.*
 
 ![Google Sheets incident log](docs/GoogleSheetsRecord.png)
 *One row is appended per alerted batch, recording the timestamp, batch size, anomaly count and rate, max score, severity and whether the LLM or the fallback path was used. Here `triage_path` is `llm` and `llm_error` is empty.*
