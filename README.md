@@ -35,6 +35,26 @@ The autoencoder is trained on **normal rows only**. Each record's score is its r
 
 Note the gap between the 1% false-positive rate on validation and 2.8% on test. KDDTest+ normal traffic is distributed differently from KDDTrain+, a small taste of real-world drift.
 
+### Screenshots
+
+![The complete n8n workflow](docs/completeWorkflow.png)
+*The full n8n workflow: webhook, scorer call, rate gate, Claude triage, JSON validation, then either the triaged or the fallback alert, with Discord and Google Sheets at the end. Both alert variants feed the same two sinks, so the incident log is written whichever path ran.*
+
+![Triaged Discord alert](docs/DiscordBotNotification.png)
+*A triaged alert for an attack-heavy batch of 200 records, 42 of them flagged: severity P3, a summary, a hedged likely cause, four suggested checks and a confidence level. It ends with a line stating the triage is advisory and no action has been taken.*
+
+![Fallback Discord alert](docs/LLMFail.png)
+*The same batch with the Anthropic credential deliberately broken: the alert still goes out, marked UNTRIAGED, with the LLM error and the raw scorer stats. This is the graceful-degradation path, and a human is told plainly that they need to do the triage.*
+
+![Google Sheets incident log](docs/GoogleSheetsRecord.png)
+*One row is appended per alerted batch, recording the timestamp, batch size, anomaly count and rate, max score, severity and whether the LLM or the fallback path was used. Here `triage_path` is `llm` and `llm_error` is empty.*
+
+![n8n execution history with a normal batch](docs/TwoExecutions-SafeBatchShown.png)
+*The executions list, with the latest run (a normal-only batch) selected. It stops at the "Anomaly rate over threshold?" node and takes the false branch, so there is no LLM call, no alert and no log row.*
+
+![Scorer /metrics output and structured logs](docs/metrics%20API.png)
+*The Prometheus counters from `/metrics` (requests, records scored, anomalies, latency histogram count) above the scorer's structured JSON log lines. Each log line carries the batch size, anomaly count and latency in milliseconds, and most requests complete in under 30 ms.*
+
 ## Quick start
 
 ```bash
